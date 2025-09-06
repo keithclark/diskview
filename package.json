@@ -1,0 +1,24 @@
+{
+  "name": "@keithclark/diskview",
+  "type": "module",
+  "version": "1.0.0",
+  "author": {
+    "name": "Keith Clark",
+    "url": "https://keithclark.co.uk"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "rollup -c",
+    "test": "node test/index.js"
+  },
+  "files": [
+    "/dist"
+  ],
+  "exports": {
+    "/": "./dist/main.js"
+  },
+  "types": "./dist/main.d.ts",
+  "devDependencies": {
+    "@rollup/plugin-terser": "^0.4.4"
+  }
+}

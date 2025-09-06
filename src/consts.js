@@ -1,0 +1,13 @@
+export const FILE_ATTRIBUTE_READ_ONLY = 0x01;
+export const FILE_ATTRIBUTE_HIDDEN = 0x02;
+export const FILE_ATTRIBUTE_SYSTEM = 0x04;
+export const FILE_ATTRIBUTE_VOLUME_LABEL = 0x08;
+export const FILE_ATTRIBUTE_DIRECTORY = 0x10;
+export const FILE_ATTRIBUTE_ARCHIVE = 0x20;
+
+export const FAT_ENTRY_SIZE = 0x20;
+export const FAT_DIRECTORY_WAYPOINT_CHAR = 0x2e;
+
+export const FAT_CLUSTER_EMPTY = 0x00;
+export const FAT_CLUSTER_RESERVED = 0x01;
+export const FAT_CLUSTER_TERMINATOR = 0xfff;
