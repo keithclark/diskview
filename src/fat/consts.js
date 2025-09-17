@@ -11,3 +11,8 @@ export const FAT_DIRECTORY_WAYPOINT_CHAR = 0x2e;
 export const FAT_CLUSTER_EMPTY = 0x00;
 export const FAT_CLUSTER_RESERVED = 0x01;
 export const FAT_CLUSTER_TERMINATOR = 0xfff;
+
+
+export const FAT_DISKVIEW_CONFIG_OPTION_FAT12 = 'fat12';
+export const FAT_DISKVIEW_CONFIG_OPTION_FAT16 = 'fat16';
+

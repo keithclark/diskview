@@ -1,19 +1,19 @@
-import Fat12Exception from "./Fat12Error.js";
+import FatException from "./FatError.js";
 import { FAT_ENTRY_SIZE } from "./consts.js";
 import { isValidFilename, parsePath } from "./utils.js";
 
 /**
- * Represents a view over a FAT12 directory entry in a given ArrayBuffer.
+ * Represents a view over a FAT  directory entry in a given ArrayBuffer.
  * Allows reading and writing of file metadata such as filename, size, 
  * start cluster, and attributes.
  */
-export default class Fat12DirectoryEntryView {
+export default class FatDirectoryEntryView {
   /** @type {DataView} */
   #view
 
   /**
-   * Creates a new view of a FAT12 directory entry.
-   * @param {ArrayBuffer} buffer The buffer containing the FAT12 directory entry.
+   * Creates a new view of a FAT directory entry.
+   * @param {ArrayBuffer} buffer The buffer containing the FAT directory entry.
    * @param {number} [byteOffset] Offset into the buffer where the entry starts.
    * @throws {Error} If `buffer` is not an ArrayBuffer.
    */
@@ -29,7 +29,7 @@ export default class Fat12DirectoryEntryView {
    */
   #assertValidFileName(name) {
     if (!isValidFilename(name)) {
-      throw new Fat12Exception(`Invalid filename "${name}"`);
+      throw new FatException(`Invalid filename "${name}"`);
     }
   }
 
@@ -129,7 +129,7 @@ export default class Fat12DirectoryEntryView {
   }
 
   /**
-   * Gets the number of bytes in a FAT12 directory entry.
+   * Gets the number of bytes in a FAT directory entry.
    * @type {number}
    */
   get byteLength() {

@@ -1,4 +1,3 @@
-import { FAT_ENTRY_SIZE } from "./consts.js";
 
 export default class Fat12TableView {
   /** @type {Uint8Array} */

@@ -2,8 +2,7 @@ import assert from 'assert';
 
 import { createEmptyDisk } from '../disk.helpers.js';
 
-import Fat12DiskView from '../../src/main.js';
-import Fat12DirectoryEntryView from '../../src/Fat12DirectoryEntryView.js';
+import { FatDiskView, FatDirectoryEntryView } from '../../src/main.js';
 
 
 /* 
@@ -11,7 +10,7 @@ import Fat12DirectoryEntryView from '../../src/Fat12DirectoryEntryView.js';
 
 {
   const disk = createEmptyDisk({ tracks: 80, sides: 2, sectorsPerTrack: 10 })
-  const view = new Fat12DiskView(disk);
+  const view = new FatDiskView(disk);
 
   assert.throws(
     () => view.getDirectory('NOTFOUND'),
@@ -47,14 +46,14 @@ import Fat12DirectoryEntryView from '../../src/Fat12DirectoryEntryView.js';
     new Uint8Array([0x00,0x00])
   );
 
-  const disk = new Fat12DiskView(buffer);
+  const disk = new FatDiskView(buffer);
 
   // Create the directory (in the disk root)
   const dir = disk.createDirectory('TEST');
 
   assert.ok(
-    dir instanceof Fat12DirectoryEntryView,
-    'createDirectory() should return a Fat12DirectoryEntryView'
+    dir instanceof FatDirectoryEntryView,
+    'createDirectory() should return a FatDirectoryEntryView'
   );
 
   assert.equal(dir.getName(), 'TEST');
@@ -101,12 +100,12 @@ import Fat12DirectoryEntryView from '../../src/Fat12DirectoryEntryView.js';
     new Uint8Array([0x00,0x00,0x00])
   );
 
-  const disk = new Fat12DiskView(buffer);
+  const disk = new FatDiskView(buffer);
   const file = disk.createFile('TEST.DAT');
 
   assert.ok(
-    file instanceof Fat12DirectoryEntryView,
-    'createFile() should return a Fat12DirectoryEntryView'
+    file instanceof FatDirectoryEntryView,
+    'createFile() should return a FatDirectoryEntryView'
   );
 
   assert.equal(file.getName(), 'TEST.DAT');

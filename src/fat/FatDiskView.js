@@ -1,6 +1,7 @@
-import Fat12DirectoryEntryView from './Fat12DirectoryEntryView.js';
+import FatDirectoryEntryView from './FatDirectoryEntryView.js';
 import Fat12TableView from './Fat12TableView.js';
-import DiskView from "./DiskView.js";
+import Fat16TableView from './Fat16TableView.js';
+import DiskView from "../DiskView.js";
 
 import { parsePath, isValidFilename } from "./utils.js";
 
@@ -10,22 +11,36 @@ import {
   FILE_ATTRIBUTE_DIRECTORY,
   FAT_CLUSTER_EMPTY,
   FAT_CLUSTER_RESERVED,
-  FAT_CLUSTER_TERMINATOR
+  FAT_CLUSTER_TERMINATOR,
+  FAT_DISKVIEW_CONFIG_OPTION_FAT16,
+  FAT_DISKVIEW_CONFIG_OPTION_FAT12
 } from './consts.js';
 
-import Fat12Exception, {
+import FatException, {
   ERROR_NAME_WRITE,
   ERROR_NAME_NOT_FOUND
-} from './Fat12Error.js';
-
+} from './FatError.js';
 
 /**
- * The Fat12DiskView view provides a low-level interface for reading and writing
- * to files and directories in a binary `ArrayBuffer` containing a FAT12 disk
- * image.
+ * @typedef {Object} FatDiskViewInitDict Configuration options for creating a new `FatDiskView` instance
+ * @property {'fat12'|'fat16'} [format='fat12'] The FAT format of the filesystem the view represents
  */
-export default class Fat12DiskView extends DiskView {
 
+/**
+ * The FatDiskView view provides a low-level interface for reading from, and 
+ * writing to, files and directories on a FAT12 or FAT16 disk image stored in a
+ * binary `ArrayBuffer`.
+ * 
+ * @example
+ * ```
+ * const data = readFileSync('my-disk.img');
+ * const view = new FatDiskView(data.buffer, { format: 'fat12' });
+ * const rootDirEntries = view.getDirectoryContents();
+ * 
+ * console.log(rootDirEntries)
+ * ```
+ */
+export default class FatDiskView extends DiskView {
   #fatStart;
   #rootDirStart;
   #rootDirSize;
@@ -36,45 +51,61 @@ export default class Fat12DiskView extends DiskView {
   #fatCount;
   #reservedSectors;
   #numberDirectecories;
+  #FatTableView;
 
 
   /**
-   * Creates a new `Fat12DiskView` instance
-   * @param {ArrayBuffer} buffer The buffer containin a FAT12 formatted disk image
+   * Creates a new `FatDiskView` instance
+   * 
+   * @param {ArrayBuffer} buffer An ArrayBuffer to use as the storage backing the new FatDiskView
+   * @param {FatDiskViewInitDict} [options] The options for customising the new view instance
+   * @param {number} [byteOffset] The offset into the buffer where the disk image data starts.
    */
-  constructor(buffer) {
-    const v = new DataView(buffer)
-    const bytesPerSector = v.getUint16(0x0b, true)
-    const sectorsPerCluster = v.getUint8(0x0d)
-    const totalSectors = v.getUint16(0x13, true)
-    const sectorsPerTrack = v.getUint16(0x18, true)
-    const heads = v.getUint16(0x1a, true)
+  constructor(buffer, options = {}, byteOffset = 0) {
+    const {
+      format = FAT_DISKVIEW_CONFIG_OPTION_FAT12
+    } = options;
+
+    const bootsector = new DataView(buffer, byteOffset);
+    const bytesPerSector = bootsector.getUint16(0x0b, true);
+    const sectorsPerCluster = bootsector.getUint8(0x0d);
+    const totalSectors = bootsector.getUint16(0x13, true);
+    const sectorsPerTrack = bootsector.getUint16(0x18, true);
+    const heads = bootsector.getUint16(0x1a, true);
     const tracks = totalSectors / sectorsPerTrack / heads;
 
-    super(buffer, tracks, heads, sectorsPerTrack, bytesPerSector)
+    super(buffer, {tracks, sides: heads, sectorsPerTrack, bytesPerSector}, byteOffset)
 
-    this.#numberDirectecories = v.getUint16(0x11, true)
-    this.#reservedSectors = v.getUint16(0xe, true) || 1; // fix invalid values
-    this.#fatCount = v.getUint8(0x10)
-    this.#fatSize = v.getUint16(0x16, true)
+    if (format === FAT_DISKVIEW_CONFIG_OPTION_FAT12) {
+      this.#FatTableView = Fat12TableView;
+    } else if (format === FAT_DISKVIEW_CONFIG_OPTION_FAT16) {
+      this.#FatTableView = Fat16TableView;
+    } else {
+      throw new TypeError(`Unknown FAT filesystem type ${format}`);
+    }
+
+    this.#numberDirectecories = bootsector.getUint16(0x11, true);
+    this.#reservedSectors = bootsector.getUint16(0xe, true) || 1; // fixes invalid values
+    this.#fatCount = bootsector.getUint8(0x10);
+    this.#fatSize = bootsector.getUint16(0x16, true);
     this.#clusterSize = sectorsPerCluster * bytesPerSector;
-    this.#fatStart = this.#reservedSectors * this.bytesPerSector;
-    this.#rootDirStart = this.#fatStart + (this.#fatCount * this.#fatSize * this.bytesPerSector)
-    this.#rootDirSize = this.#numberDirectecories * FAT_ENTRY_SIZE
-    this.#dataStart = this.#rootDirStart + this.#rootDirSize
+    this.#fatStart =( this.#reservedSectors * this.bytesPerSector) + byteOffset;
+    this.#rootDirStart = this.#fatStart + (this.#fatCount * this.#fatSize * this.bytesPerSector);
+    this.#rootDirSize = this.#numberDirectecories * FAT_ENTRY_SIZE;
+    this.#dataStart = this.#rootDirStart + this.#rootDirSize;
 
-    const fatSectors = this.#fatCount * this.#fatSize
+    const fatSectors = this.#fatCount * this.#fatSize;
     const dataSectors = totalSectors - this.#reservedSectors - fatSectors - (this.#rootDirSize / bytesPerSector);
-    this.#maxClusters = (dataSectors / sectorsPerCluster)
+    this.#maxClusters = (dataSectors / sectorsPerCluster);
   }
 
 
   /**
-   * Resolves a fully qualified path to a directory (a `Fat12DirectoryEntryView`
+   * Resolves a fully qualified path to a directory (a `FatDirectoryEntryView`
    * instance) and filename (a string).
    * 
    * @param {string} path The file path to resolve
-   * @returns {{name: string, directoryEntry: Fat12DirectoryEntryView}}
+   * @returns {{name: string, directoryEntry: FatDirectoryEntryView}}
    */
   #resolvePath(path) {
     const { dir, base } = parsePath(path);
@@ -99,7 +130,7 @@ export default class Fat12DiskView extends DiskView {
     const clusterView = new Uint8Array(this.buffer, byteOffset, byteLength);
     let offset = 0;
     while (offset < byteLength && clusterView[offset] !== 0) {
-      yield new Fat12DirectoryEntryView(this.buffer, byteOffset + offset);
+      yield new FatDirectoryEntryView(this.buffer, byteOffset + offset);
       offset += FAT_ENTRY_SIZE;
     }
   }
@@ -107,7 +138,7 @@ export default class Fat12DiskView extends DiskView {
 
   /**
    * 
-   * @param {Fat12DirectoryEntryView} entry 
+   * @param {FatDirectoryEntryView} entry 
    */
   *#directoryIterator(entry) {
     const fatTable = this.#getFatTable();
@@ -129,9 +160,9 @@ export default class Fat12DiskView extends DiskView {
 
   /**
    * 
-   * @param {Iterable<Fat12DirectoryEntryView>} entries 
+   * @param {Iterable<FatDirectoryEntryView>} entries 
    * @param {string} name 
-   * @returns {Fat12DirectoryEntryView|null}
+   * @returns {FatDirectoryEntryView|null}
    */
   #findEntryByName(entries, name) {
     for (const entry of entries) {
@@ -148,18 +179,18 @@ export default class Fat12DiskView extends DiskView {
    */
   #assertValidFileName(name) {
     if (!isValidFilename(name)) {
-      throw new Fat12Exception(`Invalid filename "${name}"`);
+      throw new FatException(`Invalid filename "${name}"`);
     }
   }
 
 
   /**
-   * @param {Iterable<Fat12DirectoryEntryView>} entries 
+   * @param {Iterable<FatDirectoryEntryView>} entries 
    * @param {string} name 
    */
   #assertEntryNotExists(entries, name) {
     if (this.#findEntryByName(entries, name)) {
-      throw new Fat12Exception(`"${name}" aleady exists`, ERROR_NAME_WRITE);
+      throw new FatException(`"${name}" aleady exists`, ERROR_NAME_WRITE);
     }
   }
 
@@ -195,16 +226,16 @@ export default class Fat12DiskView extends DiskView {
   /**
    * 
    * @param {string} name The filename of the entry
-   * @param {Fat12DirectoryEntryView} parentDirectory The parent directory for the new entry
-   * @returns {Fat12DirectoryEntryView}
-   * @throws {Fat12Exception}
+   * @param {FatDirectoryEntryView} parentDirectory The parent directory for the new entry
+   * @returns {FatDirectoryEntryView}
+   * @throws {FatException}
    */
   #getEntry(name, parentDirectory = null) {
     this.#assertValidFileName(name);
     const directoryEntries = this.#createDirectoryIterator(parentDirectory);
     const entry = this.#findEntryByName(directoryEntries, name);
     if (!entry) {
-      throw new Fat12Exception(`Entry "${name}" not found"`, ERROR_NAME_NOT_FOUND);
+      throw new FatException(`Entry "${name}" not found"`, ERROR_NAME_NOT_FOUND);
     }
     return entry;
   }
@@ -215,8 +246,8 @@ export default class Fat12DiskView extends DiskView {
    * 
    * @param {string} name The filename of the entry
    * @param {number} attributes File attributes of the entry
-   * @param {Fat12DirectoryEntryView} parentDirectory The owner of the entry
-   * @returns {Fat12DirectoryEntryView} The new entry
+   * @param {FatDirectoryEntryView} parentDirectory The owner of the entry
+   * @returns {FatDirectoryEntryView} The new entry
    */
   #createEntry(name, attributes = 0, parentDirectory = null) {
     const directoryEntries = this.getDirectoryEntries(parentDirectory);
@@ -228,7 +259,7 @@ export default class Fat12DiskView extends DiskView {
     const offset = directoryEntries.at(-1).byteOffset + FAT_ENTRY_SIZE;
 
     // Create the entry
-    const entry = new Fat12DirectoryEntryView(this.buffer, offset);
+    const entry = new FatDirectoryEntryView(this.buffer, offset);
     entry.setName(name);
     entry.setSize(0);
     entry.setAttributes(attributes);
@@ -241,16 +272,16 @@ export default class Fat12DiskView extends DiskView {
 
 
   /**
-   * Returns a `Fat12EntryDataView` interface for the file at the specified path
+   * Returns a `FatEntryDataView` interface for the file at the specified path
    * 
    * @param {string} name 
-   * @param {Fat12DirectoryEntryView} [parentDirectory]
-   * @returns {Fat12DirectoryEntryView}
+   * @param {FatDirectoryEntryView} [parentDirectory]
+   * @returns {FatDirectoryEntryView}
    */
   getFile(name, parentDirectory = null) {
     const file = this.#getEntry(name, parentDirectory);
     if (file.getAttributes() & FILE_ATTRIBUTE_DIRECTORY) {
-      throw new Fat12Exception(`${name} is not a file`);
+      throw new FatException(`${name} is not a file`);
     }
     return file;
   }
@@ -258,12 +289,16 @@ export default class Fat12DiskView extends DiskView {
 
   /**
    * Creates an empty file in the specified directory (or in the root directory
-   * if none is provided) and returns a `Fat12DirectoryEntryView` representing
+   * if none is provided) and returns a `FatDirectoryEntryView` representing
    * the new file.
    * 
-   * @param {string} name The file name of the file
-   * @param {Fat12DirectoryEntryView} [parentDirectory] A `Fat12DirectoryEntryView` interface for the directory that file will be created in
-   * @returns {Fat12DirectoryEntryView} A `Fat12DirectoryEntryView` for the new file entry
+   * @param {string} name 
+   * The file name of the file
+   * @param {FatDirectoryEntryView} [parentDirectory] 
+   * A `FatDirectoryEntryView` interface representing the directory that new
+   * file will be created in.
+   * @returns {FatDirectoryEntryView} 
+   * A `FatDirectoryEntryView` for the new file entry
    */
   createFile(name, parentDirectory = null) {
     return this.#createEntry(name, 0, parentDirectory);
@@ -277,7 +312,7 @@ export default class Fat12DiskView extends DiskView {
    * the file, then reads the data from each cluster and assembles it into a
    * single contiguous buffer.
    *
-   * @param {Fat12DirectoryEntryView} entry The directory entry representing the file to read.
+   * @param {FatDirectoryEntryView} entry The directory entry representing the file to read.
    * @returns {Uint8Array} A byte array containing the file's contents.
    */
   getFileContents(entry) {
@@ -288,14 +323,14 @@ export default class Fat12DiskView extends DiskView {
       const data = this.#getClusterData(cluster);
       buffer.set(new Uint8Array(data), this.#clusterSize * index);
     });
-    return buffer.slice(0, entry.getSize())
+    return buffer.slice(0, entry.getSize());
   }
 
 
   /**
    * Sets the binary content of a file represented by the given directory entry.
    * 
-   * @param {Fat12DirectoryEntryView} entry The directory entry representing the file to write to.
+   * @param {FatDirectoryEntryView} entry The directory entry representing the file to write to.
    * @param {Uint8Array} contents A byte array or string containing the new contents.
    */
   setFileContents(entry, contents) {
@@ -359,14 +394,14 @@ export default class Fat12DiskView extends DiskView {
    * no parent is provided, the root directory is used.
    *
    * @param {string} name The name of the directory to retrieve.
-   * @param {Fat12DirectoryEntryView} [parentDirectory] The parent directory to search in. Defaults to the root directory if not provided.
-   * @returns {Fat12DirectoryEntryView} The directory entry corresponding to the specified name.
-   * @throws {Fat12Exception} 
+   * @param {FatDirectoryEntryView} [parentDirectory] The parent directory to search in. Defaults to the root directory if not provided.
+   * @returns {FatDirectoryEntryView} The directory entry corresponding to the specified name.
+   * @throws {FatException} 
    */
   getDirectory(name, parentDirectory = null) {
-    const entry = this.#getEntry(name, parentDirectory)
+    const entry = this.#getEntry(name, parentDirectory);
     if (!(entry.getAttributes() & FILE_ATTRIBUTE_DIRECTORY)) {
-      throw new Fat12Exception(`${name} is not a directory`);
+      throw new FatException(`${name} is not a directory`);
     }
     return entry;
   }
@@ -376,8 +411,8 @@ export default class Fat12DiskView extends DiskView {
    * Retrieves the directory entries from the specified parent directory. If
    * no parent is provided, the root directory is used.
    * 
-   * @param {Fat12DirectoryEntryView} [directory] The directory to fetch files from. If omitted, the root directory is used
-   * @returns {Fat12DirectoryEntryView[]} The entries for the directory
+   * @param {FatDirectoryEntryView} [directory] The directory to fetch files from. If omitted, the root directory is used
+   * @returns {FatDirectoryEntryView[]} The entries for the directory
    */
   getDirectoryEntries(directory = null) {
     return [...this.#createDirectoryIterator(directory)];
@@ -389,8 +424,8 @@ export default class Fat12DiskView extends DiskView {
    * directory is specified, the subdirectory is created in the root directory.
    * 
    * @param {string} name The name of the new directory
-   * @param {Fat12DirectoryEntryView} [parentDirectory] The parent of the new directory. Root if omitted
-   * @returns {Fat12DirectoryEntryView} A `Fat12DirectoryEntryView` representing the new sub directory
+   * @param {FatDirectoryEntryView} [parentDirectory] The parent of the new directory. Root if omitted
+   * @returns {FatDirectoryEntryView} A `FatDirectoryEntryView` representing the new sub directory
    */
   createDirectory(name, parentDirectory = null) {
     const entry = this.#createEntry(name, FILE_ATTRIBUTE_DIRECTORY, parentDirectory)
@@ -405,20 +440,20 @@ export default class Fat12DiskView extends DiskView {
     // New directories should contain a `.` and `..` entry. These provide a 
     // mechanism to navigate around the filesystem. `.` points to the current
     // directory and `..` points to the parent.
-    const currentDirEntry = new Fat12DirectoryEntryView(contents.buffer);
+    const currentDirEntry = new FatDirectoryEntryView(contents.buffer);
     currentDirEntry.setName('A'); // '.' is an invalid file name.
     currentDirEntry.setSize(0);
     currentDirEntry.setAttributes(FILE_ATTRIBUTE_DIRECTORY);
     currentDirEntry.setStartCluster(cluster);
 
-    const parentDirEntry = new Fat12DirectoryEntryView(contents.buffer, FAT_ENTRY_SIZE);
+    const parentDirEntry = new FatDirectoryEntryView(contents.buffer, FAT_ENTRY_SIZE);
     parentDirEntry.setName('A'); // '..' is an invalid file name.
     parentDirEntry.setSize(0);
     parentDirEntry.setAttributes(FILE_ATTRIBUTE_DIRECTORY);
     parentDirEntry.setStartCluster(parentCluster);
 
     // Since `.` and `..` aren't valid filenames, we need to bypass the 
-    // `Fat12EntryDataView` interface and write the 0x2E bytes directly to the 
+    // `FatEntryDataView` interface and write the 0x2E bytes directly to the 
     // `Uint8Array`
     contents[0] = FAT_DIRECTORY_WAYPOINT_CHAR;
     contents[FAT_ENTRY_SIZE] = FAT_DIRECTORY_WAYPOINT_CHAR;
@@ -426,15 +461,17 @@ export default class Fat12DiskView extends DiskView {
 
     // Write the new directory contents to the cluster
     this.#setClusterData(cluster, contents);
+
     return entry;
   }
 
 
   /**
-   * Returns a `Fat12EntryDataView` interface for the file at the specified path
+   * Returns a `FatDirectoryEntryView` interface for the file at the specified 
+   * path. If the file doesn't exist an exception is thrown.
    * 
-   * @param {string} path 
-   * @returns {Fat12DirectoryEntryView}
+   * @param {string} path The path of the file to access
+   * @returns {FatDirectoryEntryView} A file reference
    */
   getFileAtPath(path) {
     const { name, directory } = this.#resolvePath(path);
@@ -447,7 +484,7 @@ export default class Fat12DiskView extends DiskView {
    * structure must exist.
    * 
    * @param {string} path The path of the file to create
-   * @returns {Fat12DirectoryEntryView} A file reference
+   * @returns {FatDirectoryEntryView} A file reference
    */
   createFileAtPath(path) {
     const { name, directory } = this.#resolvePath(path);
@@ -459,8 +496,9 @@ export default class Fat12DiskView extends DiskView {
    * Returns a reference to an existing directory at a fully qualified path. The
    * parent directory structure must exist.
    * 
-   * @param {string} path The path of the directory to create
-   * @returns {Fat12DirectoryEntryView} A file reference
+   * @param {string} path The path of the directory to get a reference to
+   * @returns {FatDirectoryEntryView} The entry for the directory, or `null` if
+   * the path is resolves to the root directory.
    */
   getDirectoryAtPath(path) {
     const { segments } = parsePath(path);
@@ -478,7 +516,7 @@ export default class Fat12DiskView extends DiskView {
    * structure must exist.
    * 
    * @param {string} path The path of the directory to create
-   * @returns {Fat12DirectoryEntryView} A file reference
+   * @returns {FatDirectoryEntryView} A file reference
    */
   createDirectoryAtPath(path) {
     const { name, directory } = this.#resolvePath(path);
@@ -516,7 +554,7 @@ export default class Fat12DiskView extends DiskView {
         return cluster;
       }
     }
-    throw new Fat12Exception('Disk full', ERROR_NAME_WRITE);
+    throw new FatException('Disk full', ERROR_NAME_WRITE);
   }
 
 
@@ -531,17 +569,17 @@ export default class Fat12DiskView extends DiskView {
 
 
   /**
-   * Creates a `Fat12TableView` interface for the specified FAT table.
+   * Creates a `FatTableView` interface for the specified FAT table.
    * 
    * @param {number} [number] The FAT table to return. Defaults to `0`
-   * @returns {Fat12TableView} A Fat12TableView view contaning the bytes of the FAT table
+   * @returns {FatTableView} A FatTableView view contaning the bytes of the FAT table
    */
   #getFatTable(number = 0) {
     if (number < 0 || number > this.#fatCount - 1) {
       throw new Error('Invalid FAT number.');
     }
     const length = this.#fatSize * this.bytesPerSector;
-    return new Fat12TableView(this.buffer, this.#fatStart + (number * length), length);
+    return new this.#FatTableView(this.buffer, this.#fatStart + (number * length), length);
   }
 
 

@@ -1,5 +1,5 @@
 import assert from 'assert';
-import Fat12DirectoryEntryView from '../../src/Fat12DirectoryEntryView.js';
+import { FatDirectoryEntryView } from '../../src/main.js';
 import { logBuffer } from '../disk.helpers.js';
 
 
@@ -7,7 +7,7 @@ import { logBuffer } from '../disk.helpers.js';
 ----------------------------------------------------------------------------- */
 {
   const data = new Uint8Array(32);
-  const view = new Fat12DirectoryEntryView(data.buffer);
+  const view = new FatDirectoryEntryView(data.buffer);
 
   view.setName('FILENAME.EXT');
 
@@ -44,7 +44,7 @@ import { logBuffer } from '../disk.helpers.js';
 ----------------------------------------------------------------------------- */
 {
   const data = new Uint8Array(32);
-  const view = new Fat12DirectoryEntryView(data.buffer);
+  const view = new FatDirectoryEntryView(data.buffer);
 
   view.setSize(123456789);
 

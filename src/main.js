@@ -1,6 +1,11 @@
-import Fat12DiskView from "./Fat12DiskView.js";
-import Fat12DirectoryEntryView from "./Fat12DirectoryEntryView.js";
+import DiskView from "./DiskView.js";
+import FatDiskView from "./fat/FatDiskView.js";
+import FatDirectoryEntryView from "./fat/FatDirectoryEntryView.js";
+import FatError from "./fat/FatError.js";
 
-export default Fat12DiskView;
-
-export { Fat12DirectoryEntryView }
+export {
+  DiskView,
+  FatError,
+  FatDiskView,
+  FatDirectoryEntryView,
+}
